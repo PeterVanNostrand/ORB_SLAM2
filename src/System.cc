@@ -300,22 +300,23 @@ void System::Reset()
 
 void System::Shutdown()
 {
-    mpLocalMapper->RequestFinish();
+   mpLocalMapper->RequestFinish();
     mpLoopCloser->RequestFinish();
-    if(mpViewer)
-    {
+
+    if(mpViewer){
         mpViewer->RequestFinish();
-        while(!mpViewer->isFinished())
+         while(!mpViewer->isFinished())
             usleep(5000);
+        delete mpViewer;
+        mpViewer = static_cast<Viewer*>(NULL);
     }
 
     // Wait until all thread have effectively stopped
-    while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
-    {
+    while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA()){
         usleep(5000);
     }
 
-    if(mpViewer)
+    if(mpViewer)  // <- always 'true'
         pangolin::BindToContext("ORB-SLAM2: Map Viewer");
 }
 

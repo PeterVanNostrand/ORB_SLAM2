@@ -28,15 +28,8 @@ endif()
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
-find_package(OpenCV 3.0 QUIET)
-if(NOT OpenCV_FOUND)
-   find_package(OpenCV 2.4.3 QUIET)
-   if(NOT OpenCV_FOUND)
-      message(FATAL_ERROR "OpenCV > 2.4.3 not found.")
-   endif()
-endif()
-
-find_package(Eigen3 3.1.0 REQUIRED)
+find_package(OpenCV 3.4.1 REQUIRED)
+find_package(Eigen3 3.3.4 REQUIRED)
 find_package(Pangolin REQUIRED)
 
 include_directories(
@@ -110,4 +103,3 @@ target_link_libraries(mono_kitti ${PROJECT_NAME})
 add_executable(mono_euroc
 Examples/Monocular/mono_euroc.cc)
 target_link_libraries(mono_euroc ${PROJECT_NAME})
-
