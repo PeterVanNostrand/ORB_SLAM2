@@ -32,6 +32,16 @@ float Frame::cx, Frame::cy, Frame::fx, Frame::fy, Frame::invfx, Frame::invfy;
 float Frame::mnMinX, Frame::mnMinY, Frame::mnMaxX, Frame::mnMaxY;
 float Frame::mfGridElementWidthInv, Frame::mfGridElementHeightInv;
 
+void Frame::InitializeScaleLevels() {
+  mnScaleLevels = mpORBextractorLeft->GetLevels();
+  mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
+  mfLogScaleFactor = log(mfScaleFactor);
+  mvScaleFactors = mpORBextractorLeft->GetScaleFactors();
+  mvInvScaleFactors = mpORBextractorLeft->GetInverseScaleFactors();
+  mvLevelSigma2 = mpORBextractorLeft->GetScaleSigmaSquares();
+  mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
+}
+
 Frame::Frame()
 {}
 
