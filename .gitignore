@@ -21,6 +21,7 @@ tools/bin_vocabulary
 Vocabulary/ORBvoc.txt
 Vocabulary/ORBvoc.bin
 build/
+.vscode
 *~
 lib/
 

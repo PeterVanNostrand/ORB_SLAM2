@@ -33,9 +33,8 @@
 namespace ORB_SLAM2
 {
 
-System::System(const string &strVocFile, const string &strSettingsFile, const string &savedMapFile, const eSensor sensor, 
-               const bool bUseViewer):mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false),mbActivateLocalizationMode(false),
-        mbDeactivateLocalizationMode(false)
+System::System(const string &strVocFile, const string &strSettingsFile, const string &savedMapFile, const eSensor sensor, const bool bUseViewer)
+    :mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false),mbActivateLocalizationMode(false), mbDeactivateLocalizationMode(false)
 {
     // Output welcome message
     cout << endl <<
@@ -71,8 +70,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const st
 	  bVocLoad = mpVocabulary->loadFromTextFile(strVocFile);
 	else
 	  bVocLoad = mpVocabulary->loadFromBinaryFile(strVocFile);
-    if(!bVocLoad)
-    {
+    if(!bVocLoad){
         cerr << "Wrong path to vocabulary. " << endl;
         cerr << "Failed to open at: " << strVocFile << endl;
         exit(-1);
@@ -87,7 +85,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const st
 
     //If a saved map was provided, load in the map data
     if(savedMapFile != ""){
-        mpMap->Load(savedMapFile, *mpVocabulary);
+        mpMap->Load(savedMapFile, *mpVocabulary, strSettingsFile);
         for(auto kf: mpMap->GetAllKeyFrames())
             mpKeyFrameDatabase->add(kf);
     }

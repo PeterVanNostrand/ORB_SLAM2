@@ -119,7 +119,7 @@ void Map::clear(){
 // Binary version
 // TODO: frameid vs keyframeid
 
-KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoint*> amp, ORBextractor* orb_ext) {
+KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoint*> amp, ORBextractor* orb_ext, const cv::FileStorage &fsSettings) {
   Frame fr;
   fr.mpORBvocabulary = &voc;
   f.read((char*)&fr.mnId, sizeof(fr.mnId));              // ID
@@ -163,6 +163,25 @@ KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoi
     else fr.mvpMapPoints[i] = amp[mpidx];
   }
 
+  // ADDING FOR TESTING - PETER
+  fr.fx = fsSettings["Camera.fx"];
+  fr.fy = fsSettings["Camera.fy"];
+  fr.cx = fsSettings["Camera.cx"];
+  fr.cy = fsSettings["Camera.cy"];
+  fr.invfx = 1.0f/fr.fx;
+  fr.invfy = 1.0f/fr.fy;
+  fr.mDistCoef = cv::Mat(4,1,CV_32F);
+  fr.mDistCoef.at<float>(0) = fsSettings["Camera.k1"];
+  fr.mDistCoef.at<float>(1) = fsSettings["Camera.k2"];
+  fr.mDistCoef.at<float>(2) = fsSettings["Camera.p1"];
+  fr.mDistCoef.at<float>(3) = fsSettings["Camera.p2"];
+  fr.mK = cv::Mat::eye(3,3,CV_32F);
+  fr.mK.at<float>(0,0) = fr.fx;
+  fr.mK.at<float>(1,1) = fr.fy;
+  fr.mK.at<float>(0,2) = fr.cx;
+  fr.mK.at<float>(1,2) = fr.cy;
+  // END TESTING
+
   // mono only for now
   fr.mvuRight = vector<float>(fr.N,-1);
   fr.mvDepth = vector<float>(fr.N,-1);
@@ -200,10 +219,14 @@ MapPoint* Map::_ReadMapPoint(ifstream &f) {
   return mp;
 }
 
-bool Map::Load(const string &filename, ORBVocabulary &voc) {
-  int nFeatures = 2000;
-  float scaleFactor = 1.2;
-  int nLevels = 8, fIniThFAST = 20, fMinThFAST = 7;
+bool Map::Load(const string &filename, ORBVocabulary &voc, const string &strSettingsFile) {
+  // Load ORB parameters from the setings file
+  cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
+  int nFeatures = fsSettings["ORBextractor.nFeatures"];
+  float scaleFactor = fsSettings["ORBextractor.scaleFactor"];
+  int nLevels = fsSettings["ORBextractor.nLevels"];
+  int fIniThFAST = fsSettings["ORBextractor.iniThFAST"];
+  int fMinThFAST = fsSettings["ORBextractor.minThFAST"];
   ORB_SLAM2::ORBextractor orb_ext = ORB_SLAM2::ORBextractor(nFeatures, scaleFactor, nLevels, fIniThFAST, fMinThFAST);
 
   cerr << "Map: reading from " << filename << endl;
@@ -226,7 +249,7 @@ bool Map::Load(const string &filename, ORBVocabulary &voc) {
   cerr << "reading " << nb_keyframes << " keyframe" << endl; 
   vector<KeyFrame*> kf_by_order;
   for (unsigned int i=0; i<nb_keyframes; i++) {
-    KeyFrame* kf = _ReadKeyFrame(f, voc, amp, &orb_ext); 
+    KeyFrame* kf = _ReadKeyFrame(f, voc, amp, &orb_ext, fsSettings); 
     AddKeyFrame(kf);
     kf_by_order.push_back(kf);
   }

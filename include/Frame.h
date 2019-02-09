@@ -199,17 +199,9 @@ public:
      // Assign keypoints to the grid for speed up feature matching (called in the constructor).
     void AssignFeaturesToGrid();
 
-
-
 private:
-
-    
-
-
-
     // Computes image bounds for the undistorted image (called in the constructor).
     void ComputeImageBounds(const cv::Mat &imLeft);
-
    
     // Rotation, translation and camera center
     cv::Mat mRcw;
