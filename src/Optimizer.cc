@@ -437,8 +437,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 e->setRobustKernel(0);
         }
 
-        if(optimizer.edges().size()<10)
-            break;
+        if(optimizer.edges().size()<10) break;
+        if((nInitialCorrespondences-nBad)<5) break;
     }    
 
     // Recover optimized pose and return number of inliers
@@ -620,33 +620,30 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
                 }
                 else // Stereo observation
                 {
-                    Eigen::Matrix<double,3,1> obs;
-                    const float kp_ur = pKFi->mvuRight[mit->second];
-                    obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
+                    Eigen::Matrix<double,2,1> obs;
+                    obs << kpUn.pt.x, kpUn.pt.y;
 
-                    g2o::EdgeStereoSE3ProjectXYZ* e = new g2o::EdgeStereoSE3ProjectXYZ();
+                    g2o::EdgeSE3ProjectXYZ* e = new g2o::EdgeSE3ProjectXYZ();
 
                     e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
                     e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKFi->mnId)));
                     e->setMeasurement(obs);
                     const float &invSigma2 = pKFi->mvInvLevelSigma2[kpUn.octave];
-                    Eigen::Matrix3d Info = Eigen::Matrix3d::Identity()*invSigma2;
-                    e->setInformation(Info);
+                    e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
 
                     g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
                     e->setRobustKernel(rk);
-                    rk->setDelta(thHuberStereo);
+                    rk->setDelta(thHuberMono);
 
                     e->fx = pKFi->fx;
                     e->fy = pKFi->fy;
                     e->cx = pKFi->cx;
                     e->cy = pKFi->cy;
-                    e->bf = pKFi->mbf;
 
                     optimizer.addEdge(e);
-                    vpEdgesStereo.push_back(e);
-                    vpEdgeKFStereo.push_back(pKFi);
-                    vpMapPointEdgeStereo.push_back(pMP);
+                    vpEdgesMono.push_back(e);
+                    vpEdgeKFMono.push_back(pKFi);
+                    vpMapPointEdgeMono.push_back(pMP);
                 }
             }
         }

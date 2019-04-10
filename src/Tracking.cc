@@ -1292,6 +1292,7 @@ void Tracking::UpdateLocalKeyFrames()
         for(vector<KeyFrame*>::const_iterator itNeighKF=vNeighs.begin(), itEndNeighKF=vNeighs.end(); itNeighKF!=itEndNeighKF; itNeighKF++)
         {
             KeyFrame* pNeighKF = *itNeighKF;
+            if(!pNeighKF) continue;
             if(!pNeighKF->isBad())
             {
                 if(pNeighKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
