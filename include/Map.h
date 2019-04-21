@@ -84,9 +84,9 @@ protected:
     std::mutex mMutexMap;
 
     void _WriteMapPoint(ofstream &f, MapPoint* mp);
-    void _WriteKeyFrame(ofstream &f, KeyFrame* kf,  map<MapPoint*, unsigned long int>& idx_of_mp);
+    void _WriteKeyFrame(ofstream &f, KeyFrame* kf);
     MapPoint* _ReadMapPoint(ifstream &f);
-    KeyFrame* _ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoint*> amp, ORBextractor* ext, const cv::FileStorage &fsSettings);
+    KeyFrame* _ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::map<long unsigned int, MapPoint*>* relevantMPs, ORBextractor* ext, const cv::FileStorage &fsSettings);
 };
 
 } //namespace ORB_SLAM

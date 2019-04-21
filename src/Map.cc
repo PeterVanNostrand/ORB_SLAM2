@@ -21,6 +21,8 @@
 #include "Map.h"
 #include <sys/stat.h>
 #include<mutex>
+#define MAPVERBOSE
+#define LOGPATH "/home/peter/REU_Workspace/stereo_sensor_project/orbslam_code/data/"
 
 namespace ORB_SLAM2
 {
@@ -119,7 +121,13 @@ void Map::clear(){
 // Binary version
 // TODO: frameid vs keyframeid
 
-KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoint*> amp, ORBextractor* orb_ext, const cv::FileStorage &fsSettings) {
+KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, map<long unsigned int, MapPoint*>* relevantMPs, ORBextractor* orb_ext, const cv::FileStorage &fsSettings) {
+  #ifdef MAPVERBOSE
+    ofstream fKFs;
+    string path = LOGPATH;
+    path += "ReadKFs.txt";
+    fKFs.open(path);
+  #endif
   Frame fr;
   fr.mpORBvocabulary = &voc;
   f.read((char*)&fr.mnId, sizeof(fr.mnId));              // ID
@@ -129,23 +137,25 @@ KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoi
   cv::Mat Tcw(4,4,CV_32F);                               // position
   f.read((char*)&Tcw.at<float>(0, 3), sizeof(float));
   f.read((char*)&Tcw.at<float>(1, 3), sizeof(float));
-
   f.read((char*)&Tcw.at<float>(2, 3), sizeof(float));
   Tcw.at<float>(3,3) = 1.;
+  
   cv::Mat Qcw(1,4, CV_32F);                             // orientation
   f.read((char*)&Qcw.at<float>(0, 0), sizeof(float));
   f.read((char*)&Qcw.at<float>(0, 1), sizeof(float));
-
   f.read((char*)&Qcw.at<float>(0, 2), sizeof(float));
   f.read((char*)&Qcw.at<float>(0, 3), sizeof(float));
   Converter::RmatOfQuat(Tcw, Qcw);
 
   fr.SetPose(Tcw);
+  
   f.read((char*)&fr.N, sizeof(fr.N));                    // nb keypoints
   fr.mvKeys.reserve(fr.N);
   fr.mDescriptors.create(fr.N, 32, CV_8UC1);
   fr.mvpMapPoints = vector<MapPoint*>(fr.N,static_cast<MapPoint*>(NULL));
-
+  #ifdef MAPVERBOSE
+    fKFs << "Keyframe ID: " << fr.mnId << endl;
+  #endif
   for (int i=0; i<fr.N; i++) {
     cv::KeyPoint kp;
     f.read((char*)&kp.pt.x,     sizeof(kp.pt.x));
@@ -157,10 +167,13 @@ KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoi
     fr.mvKeys.push_back(kp);
     for (int j=0; j<32; j++)
       f.read((char*)&fr.mDescriptors.at<unsigned char>(i, j), sizeof(char));
-    unsigned long int mpidx;
-    f.read((char*)&mpidx,   sizeof(mpidx));
-    if (mpidx == ULONG_MAX) fr.mvpMapPoints[i] = NULL;
-    else fr.mvpMapPoints[i] = amp[mpidx];
+    unsigned long int mpID;
+    f.read((char*)&mpID, sizeof(mpID));
+    if (mpID == ULONG_MAX) fr.mvpMapPoints[i] = NULL;
+    else fr.mvpMapPoints[i] = (*relevantMPs)[mpID];
+    #ifdef MAPVERBOSE
+      fKFs << "KP " << i << " MPID " << mpID << endl;
+    #endif
   }
 
   // ADDING FOR TESTING - PETER
@@ -180,7 +193,8 @@ KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoi
   fr.mK.at<float>(1,1) = fr.fy;
   fr.mK.at<float>(0,2) = fr.cx;
   fr.mK.at<float>(1,2) = fr.cy;
-  // END TESTING
+  //END TESTING
+
 
   // mono only for now
   fr.mvuRight = vector<float>(fr.N,-1);
@@ -196,12 +210,25 @@ KeyFrame* Map::_ReadKeyFrame(ifstream &f, ORBVocabulary &voc, std::vector<MapPoi
 
   KeyFrame* kf = new KeyFrame(fr, this, NULL);
   kf->mnId = fr.mnId; // bleeee why? do I store that?
+  
+  // get the number of map points associated with this KFs
+  // long unsigned int nKFMPs;
+  // f.read((char*)&nKFMPs, sizeof(nKFMPs));
+  // for(int i=0; i<nKFMPs; i++){
+  //   unsigned long int mpID, mpidx;
+  //   f.read((char*)&mpID, sizeof(mpID));
+  //   kf->AddMapPoint((*relevantMPs)[mpID], i);
+  // }
   for (int i=0; i<fr.N; i++) {
     if (fr.mvpMapPoints[i]) {
       fr.mvpMapPoints[i]->AddObservation(kf, i);
       if (!fr.mvpMapPoints[i]->GetReferenceKeyFrame()) fr.mvpMapPoints[i]->SetReferenceKeyFrame(kf);
     }
   }
+
+  #ifdef MAPVERBOSE
+    fKFs.close();
+  #endif
 
   return kf;
 }
@@ -219,85 +246,6 @@ MapPoint* Map::_ReadMapPoint(ifstream &f) {
   return mp;
 }
 
-bool Map::Load(const string &filename, ORBVocabulary &voc, const string &strSettingsFile) {
-  // Load ORB parameters from the setings file
-  cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
-  int nFeatures = fsSettings["ORBextractor.nFeatures"];
-  float scaleFactor = fsSettings["ORBextractor.scaleFactor"];
-  int nLevels = fsSettings["ORBextractor.nLevels"];
-  int fIniThFAST = fsSettings["ORBextractor.iniThFAST"];
-  int fMinThFAST = fsSettings["ORBextractor.minThFAST"];
-  ORB_SLAM2::ORBextractor orb_ext = ORB_SLAM2::ORBextractor(nFeatures, scaleFactor, nLevels, fIniThFAST, fMinThFAST);
-
-  cerr << "Map: reading from " << filename << endl;
-  ifstream f;
-  f.open(filename.c_str());
-
-  long unsigned int nb_mappoints, max_id=0;
-  f.read((char*)&nb_mappoints, sizeof(nb_mappoints));              
-  cerr << "reading " << nb_mappoints << " mappoints" << endl; 
-  for (unsigned int i=0; i<nb_mappoints; i++) {
-    ORB_SLAM2::MapPoint* mp = _ReadMapPoint(f);
-    if (mp->mnId>=max_id) max_id=mp->mnId;
-    AddMapPoint(mp);
-  }
-  ORB_SLAM2::MapPoint::nNextId = max_id+1; // that is probably wrong if last mappoint is not here :(
-
-  std::vector<MapPoint*> amp = GetAllMapPoints();
-  long unsigned int nb_keyframes;
-  f.read((char*)&nb_keyframes, sizeof(nb_keyframes));
-  cerr << "reading " << nb_keyframes << " keyframe" << endl; 
-  vector<KeyFrame*> kf_by_order;
-  for (unsigned int i=0; i<nb_keyframes; i++) {
-    KeyFrame* kf = _ReadKeyFrame(f, voc, amp, &orb_ext, fsSettings); 
-    AddKeyFrame(kf);
-    kf_by_order.push_back(kf);
-  }
-  
-  // Load Spanning tree
-  map<unsigned long int, KeyFrame*> kf_by_id;
-  for(auto kf: mspKeyFrames)
-    kf_by_id[kf->mnId] = kf;
-
-  for(auto kf: kf_by_order) {
-    unsigned long int parent_id;
-    f.read((char*)&parent_id, sizeof(parent_id));          // parent id
-    if (parent_id != ULONG_MAX)
-      kf->ChangeParent(kf_by_id[parent_id]);
-    unsigned long int nb_con;                             // number connected keyframe
-    f.read((char*)&nb_con, sizeof(nb_con));  
-    for (unsigned long int i=0; i<nb_con; i++) {
-      unsigned long int id; int weight;
-      f.read((char*)&id, sizeof(id));                   // connected keyframe
-      f.read((char*)&weight, sizeof(weight));           // connection weight
-      kf->AddConnection(kf_by_id[id], weight);
-    }
-  }
-  // MapPoints descriptors
-  for(auto mp: amp) {
-    mp->ComputeDistinctiveDescriptors();
-    mp->UpdateNormalAndDepth();
-  }
-
-  #if 0
-    for(auto mp: mspMapPoints)
-      if (!(mp->mnId%100))
-        cerr << "mp " << mp->mnId << " " << mp->Observations() << " " << mp->isBad() << endl;
-  #endif
-
-  #if 0
-    for(auto kf: kf_by_order) {
-      cerr << "loaded keyframe id " << kf->mnId << " ts " << kf->mTimeStamp << " frameid " << kf->mnFrameId << " TrackReferenceForFrame " << kf->mnTrackReferenceForFrame << endl;
-      cerr << " parent " << kf->GetParent() << endl;
-      cerr << "children: ";
-      for(auto ch: kf->GetChilds())
-        cerr << " " << ch;
-      cerr <<endl;
-    }
-  #endif
-  return true;
-}
-
 void Map::_WriteMapPoint(ofstream &f, MapPoint* mp) {
   f.write((char*)&mp->mnId, sizeof(mp->mnId));               // id: long unsigned int
   cv::Mat wp = mp->GetWorldPos();
@@ -306,12 +254,18 @@ void Map::_WriteMapPoint(ofstream &f, MapPoint* mp) {
   f.write((char*)&wp.at<float>(2), sizeof(float));           // pos z: float
 }
 
-void Map::_WriteKeyFrame(ofstream &f, KeyFrame* kf, map<MapPoint*, unsigned long int>& idx_of_mp) {
+void Map::_WriteKeyFrame(ofstream &f, KeyFrame* kf) {
+  #ifdef MAPVERBOSE
+    ofstream fKFs;
+    string path = LOGPATH;
+    path += "WriteKFs.txt";
+    fKFs.open(path);
+  #endif
   f.write((char*)&kf->mnId, sizeof(kf->mnId));                 // id: long unsigned int
   f.write((char*)&kf->mTimeStamp, sizeof(kf->mTimeStamp));     // ts: double
 
   #if 0
-    cerr << "writting keyframe id " << kf->mnId << " ts " << kf->mTimeStamp << " frameid " << kf->mnFrameId << " TrackReferenceForFrame " << kf->mnTrackReferenceForFrame << endl;
+    cerr << "wrORB_SLAM2::MapPoint* mp = _ReadMapPoint(f);itting keyframe id " << kf->mnId << " ts " << kf->mTimeStamp << " frameid " << kf->mnFrameId << " TrackReferenceForFrame " << kf->mnTrackReferenceForFrame << endl;
     cerr << " parent " << kf->GetParent() << endl;
     cerr << "children: ";
     for(auto ch: kf->GetChilds())
@@ -327,12 +281,17 @@ void Map::_WriteKeyFrame(ofstream &f, KeyFrame* kf, map<MapPoint*, unsigned long
   f.write((char*)&Tcw.at<float>(0,3), sizeof(float));          // px: float
   f.write((char*)&Tcw.at<float>(1,3), sizeof(float));          // py: float
   f.write((char*)&Tcw.at<float>(2,3), sizeof(float));          // pz: float
+  
   vector<float> Qcw = Converter::toQuaternion(Tcw.rowRange(0,3).colRange(0,3));
   f.write((char*)&Qcw[0], sizeof(float));                      // qx: float
   f.write((char*)&Qcw[1], sizeof(float));                      // qy: float
   f.write((char*)&Qcw[2], sizeof(float));                      // qz: float
   f.write((char*)&Qcw[3], sizeof(float));                      // qw: float
+  
   f.write((char*)&kf->N, sizeof(kf->N));                       // nb_features: int
+  #ifdef MAPVERBOSE
+    fKFs << "Keyframe ID: " << kf->mnId << endl;
+  #endif
   for (int i=0; i<kf->N; i++) {
     cv::KeyPoint kp = kf->mvKeys[i];
     f.write((char*)&kp.pt.x,     sizeof(kp.pt.x));               // float
@@ -343,49 +302,148 @@ void Map::_WriteKeyFrame(ofstream &f, KeyFrame* kf, map<MapPoint*, unsigned long
     f.write((char*)&kp.octave,   sizeof(kp.octave));             // int
     for (int j=0; j<32; j++) 
       f.write((char*)&kf->mDescriptors.at<unsigned char>(i,j), sizeof(char));
-
-    unsigned long int mpidx; MapPoint* mp = kf->GetMapPoint(i); 
-    if (mp == NULL) mpidx = ULONG_MAX;
-    else mpidx = idx_of_mp[mp];
-    f.write((char*)&mpidx,   sizeof(mpidx));                       // long int
+    unsigned long int mpID;
+    MapPoint* mp = kf->GetMapPoint(i);
+    if (mp == NULL) mpID = ULONG_MAX;
+    else mpID = mp->mnId;
+    f.write((char*)&mpID, sizeof(mpID));
+    #ifdef MAPVERBOSE
+      fKFs << "KP " << i << " MPID " << mpID << endl;
+    #endif
   }
+
+  #ifdef MAPVERBOSE
+    fKFs.close();
+  #endif
 }
 
 bool Map::Save(const string &filename) {
   cerr << "Map: Saving to " << filename << endl;
   ofstream f;
   f.open(filename.c_str(), ios_base::out|ios::binary);
+
+  #ifdef MAPVERBOSE
+    cerr << "RUNNING IN VERBOSE MODE" <<endl;
+    cerr << "Writing log to: " << filename << ".txt" << endl;
+    ofstream ftext;
+    ftext.open(filename+".txt");
+    ftext << "MAP SAVING LOG" << endl;
+  #endif
   
-  cerr << "  writing " << mspMapPoints.size() << " mappoints" << endl;
-  unsigned long int nbMapPoints = mspMapPoints.size();
-  f.write((char*)&nbMapPoints, sizeof(nbMapPoints));  
-  for(auto mp: mspMapPoints)
-    _WriteMapPoint(f, mp);
-  map<MapPoint*, unsigned long int> idx_of_mp;
-  unsigned long int i = 0;
-  for(auto mp: mspMapPoints) {
-    idx_of_mp[mp] = i;
-    i += 1;
+  // build a list of mspKeyFrames and the connected keyframes for each (needed for localization)
+  // use of map ensures uniqueness and ordering which makes finding simple
+  map<long unsigned int, KeyFrame*> relevantKFs;
+  for(auto kf:mspKeyFrames){ // keyframes from mspKeyFrames
+    relevantKFs.insert({kf->mnId, kf});
+    for(auto ckf:kf->GetConnectedKeyFrames()){ // and those referenced by them
+      relevantKFs.insert({ckf->mnId, ckf});
+    }
   }
-  
-  cerr << "  writing " << mspKeyFrames.size() << " keyframes" << endl;
-  unsigned long int nbKeyFrames = mspKeyFrames.size();
-  f.write((char*)&nbKeyFrames, sizeof(nbKeyFrames));  
-  for(auto kf: mspKeyFrames)
-    _WriteKeyFrame(f, kf, idx_of_mp);
-  
+
+  // build a list of mappoints
+  map<long unsigned int, MapPoint*> relevantMPs;
+  for(auto kfp : relevantKFs){
+    set<MapPoint*> mps = kfp.second->GetMapPoints();
+    for(auto mp: mps){
+      relevantMPs.insert({mp->mnId, mp});
+    }
+  }
+  for(auto mp : mspMapPoints)
+    relevantMPs.insert({mp->mnId, mp});
+
+  // store the number of mappoints
+  long unsigned int nRelevantMPs = relevantMPs.size();
+  cerr << "  writing " << nRelevantMPs << " mappoints" << endl;
+  f.write((char*)&nRelevantMPs, sizeof(nRelevantMPs));
+  // store the mappoints
+  for(auto mpp: relevantMPs)
+    _WriteMapPoint(f, mpp.second);
+
+  #ifdef MAPVERBOSE
+    ftext << "MAP POINTS:" << endl;
+    ftext << "Should be: " << relevantMPs.size() << " relevant map points" << endl;
+    ftext << "Are: " << relevantMPs.size() << " in map" << endl;
+    for(auto mpp : relevantMPs){
+      ftext << "ID: " << mpp.second->mnId << endl;
+    }
+    ftext << "--------------------------------------" << endl;
+  #endif
+
+  // store the number of mspMapPoints
+  long unsigned int nMspMapPoints = mspMapPoints.size();
+  f.write((char*)&nMspMapPoints, sizeof(nMspMapPoints));
+  // store the ids of the mspMapPoints
+  for(auto mp : mspMapPoints){
+    long unsigned int mpID = mp->mnId;
+    f.write((char*)&mpID, sizeof(mpID));
+  }
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << nMspMapPoints << " MSPMapPoints" << endl;
+    ftext << "Are: " << mspMapPoints.size() << " in map " << endl;
+    for(auto mp : mspMapPoints){
+      if(mp) ftext << "ID: " << mp->mnId << endl;
+      else ftext << "ID: " << " NULL" << endl;
+    }
+    ftext << "--------------------------------------" << endl; 
+  #endif
+
+  //store the number of keyframes
+  long unsigned int nRelevantKFs = relevantKFs.size();
+  cerr << "  writing " << nRelevantKFs << " keyframes" << endl;
+  f.write((char*)&nRelevantKFs, sizeof(nRelevantKFs));
+  // store the keyframes
+  for(auto kfp : relevantKFs)
+    _WriteKeyFrame(f, kfp.second);
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << nRelevantKFs << " Relevant KFs" << endl;
+    ftext << "Are " << relevantKFs.size() << " in map" << endl;
+    for(auto kfp : relevantKFs)
+      ftext << "ID: " << kfp.second->mnId << endl;
+    ftext << "--------------------------------------" << endl;
+  #endif
+
+  // store the number of mspKeyFrames
+  long unsigned int nMspKeyFrames = mspKeyFrames.size();
+  f.write((char*)&nMspKeyFrames, sizeof(nMspKeyFrames));
+  // store the ids of the mspKeyFrames
+  for(auto kf : mspKeyFrames){
+    long unsigned int kfID = kf->mnId;
+    f.write((char*)&kfID, sizeof(kfID));
+  }
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << mspKeyFrames.size() << " MSPKeyFrames" << endl;
+    ftext << "Are: " << mspKeyFrames.size() << " in map" << endl;
+    for(auto kf : mspKeyFrames)
+      ftext << "ID: " << kf->mnId << endl;
+    ftext << "--------------------------------------" << endl; 
+  #endif
+
   // store tree and graph
-  for(auto kf: mspKeyFrames) {
-    KeyFrame* parent = kf->GetParent();
-    unsigned long int parent_id = ULONG_MAX; 
+  #ifdef MAPVERBOSE
+    ftext << "TREE AND GRAPH" << endl;
+  #endif
+  for(auto kfp : relevantKFs) {
+    KeyFrame* parent = kfp.second->GetParent();
+    long unsigned int parent_id = ULONG_MAX; 
     if (parent) parent_id = parent->mnId;
     f.write((char*)&parent_id, sizeof(parent_id));
-    unsigned long int nb_con = kf->GetConnectedKeyFrames().size();
+    long unsigned int nb_con = kfp.second->GetConnectedKeyFrames().size();
     f.write((char*)&nb_con, sizeof(nb_con));
-    for (auto ckf: kf->GetConnectedKeyFrames()) {
-      int weight = kf->GetWeight(ckf);
+    #ifdef MAPVERBOSE
+      ftext << "KF ID: " << kfp.second->mnId << endl;
+      ftext << "    KFP ID: " << parent_id << endl;
+      ftext << "    Connected KFs: (" << nb_con << ")" << endl;
+    #endif
+    for (auto ckf: kfp.second->GetConnectedKeyFrames()) {
+      int weight = kfp.second->GetWeight(ckf);
       f.write((char*)&ckf->mnId, sizeof(ckf->mnId));
       f.write((char*)&weight, sizeof(weight));
+      #ifdef MAPVERBOSE
+        ftext << "    ID: " << ckf->mnId << " Weight: " << weight << endl;
+      #endif
     }
   }
 
@@ -395,11 +453,177 @@ bool Map::Save(const string &filename) {
   stat(filename.c_str(), &st);
   cerr << "Map: saved " << st.st_size << " bytes" << endl;
 
-  #if 0
-    for(auto mp: mspMapPoints)
-      if (!(mp->mnId%100))
-        cerr << "mp " << mp->mnId << " " << mp->Observations() << " " << mp->isBad() << endl;
+  #ifdef MAPVERBOSE
+    ftext.close();
   #endif
+
+  return true;
+}
+
+bool Map::Load(const string &filename, ORBVocabulary &voc, const string &strSettingsFile) {
+  // Load ORB parameters from the setings file
+  cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
+  int nFeatures = fsSettings["ORBextractor.nFeatures"];
+  float scaleFactor = fsSettings["ORBextractor.scaleFactor"];
+  int nLevels = fsSettings["ORBextractor.nLevels"];
+  int fIniThFAST = fsSettings["ORBextractor.iniThFAST"];
+  int fMinThFAST = fsSettings["ORBextractor.minThFAST"];
+  ORB_SLAM2::ORBextractor orb_ext = ORB_SLAM2::ORBextractor(nFeatures, scaleFactor, nLevels, fIniThFAST, fMinThFAST);
+
+  // open map file
+  cerr << "Map: reading from " << filename << endl;
+  ifstream f;
+  f.open(filename.c_str());
+
+  #ifdef MAPVERBOSE
+    cerr << "RUNNING IN VERBOSE MODE" <<endl;
+    cerr << "Writing log to: " << filename << "LOADED.txt" << endl;
+    ofstream ftext;
+    ftext.open(filename+"LOADED.txt");
+    ftext << "MAP LOADING LOG" << endl;
+  #endif
+
+  // Determine the number of map point to load
+  long unsigned int nMPs, max_id=0;
+  f.read((char*)&nMPs, sizeof(nMPs));
+  cerr << "reading " << nMPs << " mappoints" << endl;
+
+  // load in the map points
+  map<long unsigned int, MapPoint*> relevantMPs;
+  for(long unsigned int i=0; i<nMPs; i++){
+    ORB_SLAM2::MapPoint* mp = _ReadMapPoint(f);
+    if (mp->mnId>=max_id) max_id=mp->mnId;
+    relevantMPs.insert({mp->mnId, mp});
+  }
+  ORB_SLAM2::MapPoint::nNextId = max_id+1; // that is probably wrong if last mappoint is not here :(
+
+  #ifdef MAPVERBOSE
+    ftext << "MAP POINTS:" << endl;
+        ftext << "Should be: " << nMPs << " relevant map points" << endl;
+    ftext << "Are: " << relevantMPs.size() << " in map" << endl;
+    for(auto mpp : relevantMPs){
+      ftext << "ID: " << mpp.second->mnId << endl;
+    }
+    ftext << "--------------------------------------" << endl;
+  #endif
+
+  // read the number of mspMapPoints
+  long unsigned int nMspMapPoints;
+  f.read((char*)&nMspMapPoints, sizeof(nMspMapPoints));
+  // read the ids of the mspMapPoints and add them to the list
+  for(long unsigned int i=0; i<nMspMapPoints; i++){
+    long unsigned int mpID;
+    f.read((char*)&mpID, sizeof(mpID));
+    AddMapPoint(relevantMPs[mpID]);
+  }
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << nMspMapPoints << " MSPMapPoints" << endl;
+    ftext << "Are: " << mspMapPoints.size() << " in map " << endl;
+    for(auto mp : mspMapPoints){
+      if(mp) ftext << "ID: " << mp->mnId << endl;
+      else ftext << "ID: " << " NULL" << endl;
+    }
+    ftext << "--------------------------------------" << endl;
+  #endif
+
+  //Determine the number of keyframes to load
+  long unsigned int nKFs;
+  f.read((char*)&nKFs, sizeof(nKFs));
+  cerr << "reading " << nKFs << " keyframe" << endl; 
+  // Load the keyframes
+  map<long unsigned int, KeyFrame*> relevantKFs;
+  for (long unsigned int i=0; i<nKFs; i++){ 
+    KeyFrame* kf = _ReadKeyFrame(f, voc, &relevantMPs, &orb_ext, fsSettings); 
+    relevantKFs.insert({kf->mnId, kf});
+  }
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << nKFs << " Relevant KFs" << endl;
+    ftext << "Are " << relevantKFs.size() << " in map" << endl;
+    for(auto kfp : relevantKFs)
+      ftext << "ID: " << kfp.second->mnId << endl;
+    ftext << "--------------------------------------" << endl;
+  #endif
+
+  // read the number of mspKeyFrames
+  long unsigned int nMspKeyFrames;
+  f.read((char*)&nMspKeyFrames, sizeof(nMspKeyFrames));
+  // read the ids of the mspKeyFrames and add them to the list
+  for(long unsigned int i=0; i<nMspKeyFrames; i++){
+    long unsigned int kfID;
+    f.read((char*)&kfID, sizeof(kfID));
+    AddKeyFrame(relevantKFs[kfID]);
+  }
+
+  #ifdef MAPVERBOSE
+    ftext << "Should be: " << nMspKeyFrames << " MSPKeyFrames" << endl;
+    ftext << "Are: " << mspKeyFrames.size() << " in map" << endl;
+    for(auto kf : mspKeyFrames)
+      ftext << "ID: " << kf->mnId << endl;
+    ftext << "--------------------------------------" << endl; 
+  #endif
+
+  // Load Spanning tree
+  #ifdef MAPVERBOSE
+    ftext << "TREE AND GRAPH" << endl;
+  #endif
+  for(auto kfp : relevantKFs) {
+    long unsigned int parent_id;
+    f.read((char*)&parent_id, sizeof(parent_id));          // parent id
+    if (parent_id != ULONG_MAX)
+      kfp.second->ChangeParent(relevantKFs[parent_id]);
+    long unsigned int nb_con;                             // number connected keyframe
+    f.read((char*)&nb_con, sizeof(nb_con)); 
+    #ifdef MAPVERBOSE
+      ftext << "KF ID: " << kfp.second->mnId << endl;
+      ftext << "    KFP ID: " << parent_id << endl;
+      ftext << "    Connected KFs: (" << nb_con << ")" << endl;
+    #endif 
+    for (long unsigned int i=0; i<nb_con; i++) {
+      long unsigned int id; int weight;
+      f.read((char*)&id, sizeof(id));                   // connected keyframe
+      f.read((char*)&weight, sizeof(weight));           // connection weight
+      kfp.second->AddConnection(relevantKFs[id], weight);
+      #ifdef MAPVERBOSE
+        ftext << "    ID: " << id << " Weight: " << weight << endl;
+      #endif
+    }
+  }
+  // MapPoints descriptors
+  for(auto mpp : relevantMPs) {
+    if(mpp.second && mpp.first!=ULONG_MAX){
+      mpp.second->ComputeDistinctiveDescriptors();
+      mpp.second->UpdateNormalAndDepth();
+    }
+  }
+
+  #ifdef MAPVERBOSE
+    // ftext << "There are " << mspKeyFrames.size() << " MSPKeyFrames" << endl;
+    // for(auto kf:mspKeyFrames){ // keyframes from mspKeyFrames
+    //     ftext << "MSP KF: " << kf->mnId << endl;
+    //     ftext << "Connected KeyFrames:" << endl;
+    //   for(auto ckf:kf->GetConnectedKeyFrames()){ // and those referenced by them
+    //     ftext << "ID: " << ckf->mnId << endl;
+    //   }
+    // }
+
+    //ftext << "Read " << relevantKFs.size() << " relevant key frames" << endl;
+    //ftext << "--------------------------------------" << endl;
+    // ftext << "There are " << mspMapPoints.size() << " MSPMapPoints" << endl;
+    
+    // ftext << "--------------------------------------" << endl;
+    // ftext << "Read " << relevantKFs.size() << " relevant map points" << endl;
+    // ftext << "Relevant Key Frames:" << endl;
+    // for(auto kfp : relevantKFs){
+    //   ftext << "ID: " << kfp.second->mnId << endl;
+    // }
+
+    ftext.close();
+  #endif
+
+  f.close();
+  cerr << "Map: finished Loading" << endl;
 
   return true;
 }
